@@ -50,16 +50,17 @@ cd ClientSideFileUploadV2
 ### 2. Install dependencies
 
 ```bash
+cd server
 npm install
 ```
 
 ### 3. Configure environment variables
 
 ```bash
-cp .env.sample .env
+cp .env.sample .env      # run inside server/
 ```
 
-Edit `.env` with your ImageKit credentials (from [Dashboard > Developer Options](https://imagekit.io/dashboard/developer/api-keys)):
+Edit `server/.env` with your ImageKit credentials (from [Dashboard > Developer Options](https://imagekit.io/dashboard/developer/api-keys)):
 
 ```env
 IMAGEKIT_PUBLIC_KEY=your_public_key
@@ -73,25 +74,37 @@ Unlike V1, there's no client-side public-key file to update — V2 never sends `
 ### 4. Start the server
 
 ```bash
+# from server/
 npm start        # Production
 npm run dev      # Development (auto-reload)
 ```
 
 ### 5. Open the frontend
 
-Open `index.html` in your browser using a local server on **port 5501** (e.g. `python3 -m http.server 5501`), not 5500 — that's reserved for the V1 demo so both can run side by side.
+Serve the `public/` folder on **port 5501** and open it in your browser:
+
+```bash
+# from the project root
+python3 -m http.server 5501 --directory public
+```
+
+Use 5501, not 5500 — that's reserved for the V1 demo so both can run side by side.
 
 ## Project Structure
 
 ```
 ClientSideFileUploadV2/
-├── index.html          # Frontend UI
-├── style.css           # Styles (same as V1)
-├── script.js            # Upload using raw fetch() against Upload API V2
-├── index.js               # Node.js server — signs the V2 JWT
-├── package.json
-├── .env.sample
-├── .env                     # Your credentials (git-ignored)
+├── public/                  # browser side, nothing secret
+│   ├── index.html           # Frontend UI
+│   ├── style.css            # Styles (same as V1)
+│   └── script.js            # Upload using raw fetch() against Upload API V2
+├── server/                  # backend, holds the keys
+│   ├── index.js             # Node.js server — signs the V2 JWT
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── .env.sample
+│   └── .env                 # Your credentials (git-ignored)
+├── README.md
 └── .gitignore
 ```
 
@@ -113,6 +126,24 @@ const token = jwt.sign(uploadPayload, process.env.IMAGEKIT_PRIVATE_KEY, {
 `jwt.sign` with `expiresIn` automatically stamps `iat` (issued-at) and computes `exp`, both as integers — satisfying ImageKit's requirement without extra code. Every other value in the payload must be a **string** (e.g. `useUniqueFileName: "true"`, not the boolean `true`).
 
 The client then reuses the exact same `uploadPayload` object for its `FormData` — this is deliberate: it guarantees the actual request can never drift from what was signed, since the ImageKit server rejects the upload if the params don't match what's in the JWT.
+
+## Payload-Mismatch Behaviour (live-tested)
+
+What Upload API V2 returned when the signed claims and the multipart fields differed (tested 2026-10-16):
+
+| Case | Signed claims vs multipart | Result |
+|---|---|---|
+| Control | `fileName`, `folder` match | 200 |
+| Customer case | claim `filename`, multipart `fileName` | 400 "does not match with the payload used to generate token" |
+| Lowercase in both | claim `filename`, multipart `filename` | 400 "missing fileName paramater" |
+| Missing claim | multipart has `folder`, claim does not | 400 payload mismatch |
+| Extra claim | claim has `folder`, multipart does not | 400 payload mismatch |
+| Folder slash differs | claim `/x`, multipart `x` | 400 payload mismatch |
+| Folder format, consistent | `x`, `x/` or `/x` in both | 200 |
+| Non-string claim | `useUniqueFileName: true` (boolean) | 400 payload mismatch |
+| Extra non-upload claims | `aud`, `iss` added to the JWT | 200 (ignored) |
+
+The claim key must be the exact parameter name (`fileName`, camelCase).
 
 ## Relevant Links
 
